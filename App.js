@@ -242,31 +242,33 @@ function AppShell() {
   }, [token, logout]);
 
   useEffect(() => {
-    if (isAuthenticated) {
-      loadBookings();
-    } else {
-      setBookings([]);
-      setNotesByBooking({});
-      setCurrentUser(null);
-      setEmployeeTime({ employee: "—", checkIn: "", checkOut: "" });
-      setTimeTrackerKind("");
-      setTimeActionLoading(false);
-      const d = new Date();
-      setOverviewYear(d.getFullYear());
-      setOverviewMonth(d.getMonth() + 1);
-      setTimeOverviewRows([]);
-      setTimeOverviewError("");
-      setTimeUserTotals(null);
-      setTimeTotalsError("");
-      setMyShifts([]);
-      setMyShiftsError("");
-      setTeamStatusRows([]);
-      setTeamStatusError("");
-      setTeamStatusFilter(LAST_USER_FILTER_CHECKIN);
-      setBookingsListDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
-      setDayMode(DAY_MODE.ARRIVAL);
-    }
+    if (!isAuthenticated) return;
+    loadBookings();
   }, [isAuthenticated, loadBookings]);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    setBookings([]);
+    setNotesByBooking({});
+    setCurrentUser(null);
+    setEmployeeTime({ employee: "—", checkIn: "", checkOut: "" });
+    setTimeTrackerKind("");
+    setTimeActionLoading(false);
+    const d = new Date();
+    setOverviewYear(d.getFullYear());
+    setOverviewMonth(d.getMonth() + 1);
+    setTimeOverviewRows([]);
+    setTimeOverviewError("");
+    setTimeUserTotals(null);
+    setTimeTotalsError("");
+    setMyShifts([]);
+    setMyShiftsError("");
+    setTeamStatusRows([]);
+    setTeamStatusError("");
+    setTeamStatusFilter(LAST_USER_FILTER_CHECKIN);
+    setBookingsListDate(new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+    setDayMode(DAY_MODE.ARRIVAL);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (isAuthenticated) {
