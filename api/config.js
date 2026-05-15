@@ -43,6 +43,16 @@ export const API_BOOKINGS_FILTER_PATH =
   process.env.EXPO_PUBLIC_API_BOOKINGS_FILTER_PATH ??
   "/api/external/bookings/filter";
 
+/** Search bookings (query string + paging). */
+export const API_BOOKINGS_SEARCH_PATH =
+  process.env.EXPO_PUBLIC_API_BOOKINGS_SEARCH_PATH ??
+  "/api/external/bookings/search";
+
+/** All bookings, paginated (GET, Bearer). */
+export const API_BOOKINGS_ALL_PATH =
+  process.env.EXPO_PUBLIC_API_BOOKINGS_ALL_PATH ??
+  "/api/external/bookings/all";
+
 /** All selectable detail-status definitions (GET). */
 export const API_BOOKINGS_DETAIL_STATUS_ALL_PATH =
   "/api/external/bookings/detail/status/all";

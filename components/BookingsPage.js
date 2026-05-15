@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -11,9 +11,15 @@ import {
   Alert,
   Keyboard,
   Platform,
+  TextInput,
 } from "react-native";
 import BookingCard from "./BookingCard";
 import BookingCashModal from "./BookingCashModal";
+import HandoverProtocolModal from "./HandoverProtocolModal";
+import {
+  getHandoverProtocol,
+  handoverProtocolHasContent,
+} from "../lib/handoverProtocol";
 import {
   isDetailLegFinishedSuccess,
   isDetailLegChanged,
@@ -90,6 +96,14 @@ export default function BookingsPage({
   onSelectDeparturesToday,
   onSelectArrivalsTomorrow,
   onSelectDeparturesTomorrow,
+  searchString,
+  onSearchStringChange,
+  searchMeta,
+  allActive,
+  onAllActiveChange,
+  allMeta,
+  onLoadMore,
+  loadingMore,
   notesByBooking,
   onChangeNote,
   onNoteDraftClear,
@@ -102,7 +116,26 @@ export default function BookingsPage({
   const { token, logout } = useAuth();
   const [detailStatusSavingId, setDetailStatusSavingId] = useState(/** @type {string | null} */ (null));
   const [cashBooking, setCashBooking] = useState(/** @type {object | null} */ (null));
+  const [protocolBooking, setProtocolBooking] = useState(/** @type {object | null} */ (null));
+  const [protocolStoreRevision, setProtocolStoreRevision] = useState(0);
   const [noteSavingId, setNoteSavingId] = useState(/** @type {string | null} */ (null));
+  const [searchDraft, setSearchDraft] = useState(String(searchString ?? ""));
+  const [headerCollapsed, setHeaderCollapsed] = useState(false);
+
+  useEffect(() => {
+    setSearchDraft(String(searchString ?? ""));
+  }, [searchString]);
+
+  useEffect(() => {
+    const next = String(searchDraft ?? "");
+    const current = String(searchString ?? "");
+    if (next === current) return;
+    const t = setTimeout(() => {
+      onSearchStringChange?.(next);
+      onRefresh?.(next);
+    }, 500);
+    return () => clearTimeout(t);
+  }, [searchDraft, searchString, onSearchStringChange, onRefresh]);
 
   const detailStatusOptionsForMode = useMemo(
     () => filterDetailStatusesForDayMode(detailStatusCatalog ?? [], dayMode),
@@ -212,15 +245,32 @@ export default function BookingsPage({
     () => (
       <View style={s.listHeader}>
         <Text style={[s.sectionTitle, { color: C.text }]}>
-          {dayMode === DAY_MODE.ARRIVAL ? "Ankünfte" : "Rückreisen"}{" "}
-          {listDayLabel(bookingsListDate)}
+          {allActive
+            ? "Alle Buchungen"
+            : `${dayMode === DAY_MODE.ARRIVAL ? "Ankünfte" : "Rückreisen"} ${listDayLabel(
+                bookingsListDate
+              )}`}
         </Text>
         <Text style={[s.sectionCount, { color: C.blue }]}>
-          {filtered.length} Buchungen
+          {searchString?.trim()
+            ? `${filtered.length} / ${searchMeta?.amount ?? filtered.length} Treffer`
+            : allActive
+              ? `${filtered.length} / ${allMeta?.amount ?? filtered.length}`
+              : `${filtered.length} Buchungen`}
         </Text>
       </View>
     ),
-    [dayMode, bookingsListDate, filtered.length, C.text, C.blue]
+    [
+      allActive,
+      allMeta?.amount,
+      dayMode,
+      bookingsListDate,
+      filtered.length,
+      C.text,
+      C.blue,
+      searchString,
+      searchMeta?.amount,
+    ]
   );
 
   const t0 = todayLocal();
@@ -247,6 +297,8 @@ export default function BookingsPage({
         onSetDetailStatus={handleSetDetailStatus}
         detailStatusSaving={detailStatusSavingId === String(item.id)}
         onPressCashRegister={() => setCashBooking(item)}
+        hasHandoverProtocol={handoverProtocolHasContent(getHandoverProtocol(item.id))}
+        onPressHandoverProtocol={() => setProtocolBooking(item)}
         C={C}
       />
     ),
@@ -259,7 +311,7 @@ export default function BookingsPage({
       detailStatusOptionsForMode,
       handleSetDetailStatus,
       detailStatusSavingId,
-      setCashBooking,
+      protocolStoreRevision,
       C,
     ]
   );
@@ -295,22 +347,48 @@ export default function BookingsPage({
 
   return (
     <View style={s.root}>
-      <View style={s.statsRow}>
-        {stats.map(({ num, label, color }) => (
-          <View
-            key={label}
+      <View style={s.headerToolsRow}>
+        <TouchableOpacity
+          onPress={() => setHeaderCollapsed((v) => !v)}
+          style={[
+            s.headerToolBtn,
+            { borderColor: C.border, backgroundColor: C.surface },
+            headerCollapsed && { backgroundColor: C.blue, borderColor: C.blue },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={headerCollapsed ? "Header einblenden" : "Header minimieren"}
+        >
+          <Text
             style={[
-              s.statCard,
-              { backgroundColor: C.surface, borderColor: C.border },
+              s.headerToolText,
+              { color: C.text2 },
+              headerCollapsed && s.headerToolTextActive,
             ]}
           >
-            <Text style={[s.statNum, { color }]}>{num}</Text>
-            <Text style={[s.statLabel, { color: C.text2 }]}>{label}</Text>
-          </View>
-        ))}
+            {headerCollapsed ? "Header anzeigen" : "Vollbild"}
+          </Text>
+        </TouchableOpacity>
       </View>
 
-      <View style={s.modeSwitchWrap}>
+      {!headerCollapsed ? (
+        <View style={s.statsRow}>
+          {stats.map(({ num, label, color }) => (
+            <View
+              key={label}
+              style={[
+                s.statCard,
+                { backgroundColor: C.surface, borderColor: C.border },
+              ]}
+            >
+              <Text style={[s.statNum, { color }]}>{num}</Text>
+              <Text style={[s.statLabel, { color: C.text2 }]}>{label}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {!headerCollapsed ? (
+        <View style={s.modeSwitchWrap}>
         <TouchableOpacity
           style={[
             s.modeSwitch,
@@ -320,7 +398,11 @@ export default function BookingsPage({
               borderColor: C.blue,
             },
           ]}
-          onPress={onSelectArrivalsToday}
+          onPress={() => {
+            if (allActive) onAllActiveChange?.(false);
+            onSelectArrivalsToday?.();
+            onRefresh?.(String(searchDraft ?? ""));
+          }}
         >
           <Text
             style={[
@@ -341,7 +423,11 @@ export default function BookingsPage({
               borderColor: C.blue,
             },
           ]}
-          onPress={onSelectDeparturesToday}
+          onPress={() => {
+            if (allActive) onAllActiveChange?.(false);
+            onSelectDeparturesToday?.();
+            onRefresh?.(String(searchDraft ?? ""));
+          }}
         >
           <Text
             style={[
@@ -353,9 +439,11 @@ export default function BookingsPage({
             Rückreisen heute
           </Text>
         </TouchableOpacity>
-      </View>
+        </View>
+      ) : null}
 
-      <View style={s.modeSwitchWrap}>
+      {!headerCollapsed ? (
+        <View style={s.modeSwitchWrap}>
         <TouchableOpacity
           style={[
             s.modeSwitch,
@@ -365,7 +453,11 @@ export default function BookingsPage({
               borderColor: C.blue,
             },
           ]}
-          onPress={onSelectArrivalsTomorrow}
+          onPress={() => {
+            if (allActive) onAllActiveChange?.(false);
+            onSelectArrivalsTomorrow?.();
+            onRefresh?.(String(searchDraft ?? ""));
+          }}
         >
           <Text
             style={[
@@ -386,7 +478,11 @@ export default function BookingsPage({
               borderColor: C.blue,
             },
           ]}
-          onPress={onSelectDeparturesTomorrow}
+          onPress={() => {
+            if (allActive) onAllActiveChange?.(false);
+            onSelectDeparturesTomorrow?.();
+            onRefresh?.(String(searchDraft ?? ""));
+          }}
         >
           <Text
             style={[
@@ -398,38 +494,100 @@ export default function BookingsPage({
             Rückreisen morgen
           </Text>
         </TouchableOpacity>
-      </View>
+        </View>
+      ) : null}
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={s.strip}
-        contentContainerStyle={s.stripContent}
-      >
-        {filters.map((f) => (
-          <TouchableOpacity
-            key={f}
-            onPress={() => setActiveFilter(f)}
+      {!headerCollapsed ? (
+        <View style={s.modeSwitchWrap}>
+        <TouchableOpacity
+          style={[
+            s.modeSwitch,
+            { borderColor: C.border, backgroundColor: C.surface },
+            allActive && { backgroundColor: C.blue, borderColor: C.blue },
+          ]}
+          onPress={() => {
+            onAllActiveChange?.(!allActive);
+            onRefresh?.();
+          }}
+        >
+          <Text
             style={[
-              s.chip,
-              { borderColor: C.border },
-              activeFilter === f
-                ? { backgroundColor: C.blue, borderColor: C.blue }
-                : { backgroundColor: "rgba(255,255,255,0.07)" },
+              s.modeSwitchText,
+              { color: C.text2 },
+              allActive && s.modeSwitchTextActive,
             ]}
           >
-            <Text
+            Alle Buchungen
+          </Text>
+        </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {!headerCollapsed ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={s.strip}
+          contentContainerStyle={s.stripContent}
+        >
+          {filters.map((f) => (
+            <TouchableOpacity
+              key={f}
+              onPress={() => setActiveFilter(f)}
               style={[
-                s.chipText,
-                { color: C.text2 },
-                activeFilter === f && s.chipTextActive,
+                s.chip,
+                { borderColor: C.border },
+                activeFilter === f
+                  ? { backgroundColor: C.blue, borderColor: C.blue }
+                  : { backgroundColor: "rgba(255,255,255,0.07)" },
               ]}
             >
-              {f}
-            </Text>
+              <Text
+                style={[
+                  s.chipText,
+                  { color: C.text2 },
+                  activeFilter === f && s.chipTextActive,
+                ]}
+              >
+                {f}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      ) : null}
+
+      <View style={[s.searchWrap, { borderColor: C.border, backgroundColor: C.surface }]}>
+        <TextInput
+          value={searchDraft}
+          onChangeText={setSearchDraft}
+          placeholder="Buchungen suchen (Name, Referenz …)"
+          placeholderTextColor="#6B7280"
+          autoCapitalize="none"
+          autoCorrect={false}
+          style={[s.searchInput, { color: C.text }]}
+          returnKeyType="search"
+          onSubmitEditing={() => {
+            Keyboard.dismiss();
+            onSearchStringChange?.(String(searchDraft ?? ""));
+            onRefresh?.(String(searchDraft ?? ""));
+          }}
+        />
+        {searchDraft?.trim() ? (
+          <TouchableOpacity
+            onPress={() => {
+              Keyboard.dismiss();
+              setSearchDraft("");
+              onSearchStringChange?.("");
+              onRefresh?.("");
+            }}
+            style={s.searchClear}
+            accessibilityRole="button"
+            accessibilityLabel="Suche löschen"
+          >
+            <Text style={[s.searchClearText, { color: C.text2 }]}>×</Text>
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        ) : null}
+      </View>
 
       {error ? (
         <View style={s.errorBanner}>
@@ -449,6 +607,10 @@ export default function BookingsPage({
         keyExtractor={keyExtractor}
         contentContainerStyle={s.list}
         keyboardShouldPersistTaps="handled"
+        onEndReachedThreshold={0.4}
+        onEndReached={() => {
+          if (allActive && !loading && !loadingMore) onLoadMore?.();
+        }}
         refreshControl={
           <RefreshControl
             refreshing={loading && bookings.length > 0}
@@ -458,6 +620,26 @@ export default function BookingsPage({
           />
         }
         ListHeaderComponent={listHeader}
+        ListFooterComponent={
+          allActive &&
+          (() => {
+            const q = String(searchString ?? "").trim();
+            const meta = q ? searchMeta : allMeta;
+            return loadingMore || (meta && meta.currentPage < meta.pagesAmount);
+          })() ? (
+            <View style={s.footer}>
+              {loadingMore ? (
+                <ActivityIndicator size="small" color={C.blue} />
+              ) : (
+                <Text style={[s.footerText, { color: C.text2 }]}>
+                  Mehr laden: Seite{" "}
+                  {(String(searchString ?? "").trim() ? searchMeta?.currentPage : allMeta?.currentPage) ?? 1} /{" "}
+                  {(String(searchString ?? "").trim() ? searchMeta?.pagesAmount : allMeta?.pagesAmount) ?? 1}
+                </Text>
+              )}
+            </View>
+          ) : null
+        }
         ListEmptyComponent={
           !loading ? (
             <Text style={[s.empty, { color: C.text2 }]}>
@@ -474,6 +656,14 @@ export default function BookingsPage({
         booking={cashBooking}
         C={C}
       />
+
+      <HandoverProtocolModal
+        visible={protocolBooking != null}
+        onClose={() => setProtocolBooking(null)}
+        booking={protocolBooking}
+        C={C}
+        onSaved={() => setProtocolStoreRevision((v) => v + 1)}
+      />
     </View>
   );
 }
@@ -485,13 +675,30 @@ const s = StyleSheet.create({
   listFlex: { flex: 1 },
   strip: { flexGrow: 0 },
   stripContent: { paddingHorizontal: 20, gap: 8, paddingBottom: 12 },
+  headerToolsRow: { paddingHorizontal: 20, marginBottom: 10, flexDirection: "row", justifyContent: "flex-end" },
+  headerToolBtn: { borderWidth: 1, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 12 },
+  headerToolText: { fontSize: 12, fontWeight: "700" },
+  headerToolTextActive: { color: "#fff" },
+  searchWrap: {
+    marginHorizontal: 20,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    minHeight: 44,
+  },
+  searchInput: { flex: 1, fontSize: 14, paddingVertical: 10 },
+  searchClear: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+  searchClearText: { fontSize: 22, lineHeight: 22, marginTop: -2 },
   chip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 100, borderWidth: 1 },
   chipText: { fontSize: 13, fontWeight: "500" },
   chipTextActive: { color: "#fff" },
-  statsRow: { flexDirection: "row", gap: 10, paddingHorizontal: 20, marginBottom: 12 },
-  statCard: { flex: 1, borderWidth: 1, borderRadius: 10, padding: 12 },
-  statNum: { fontSize: 22, fontWeight: "700" },
-  statLabel: { fontSize: 11, marginTop: 2 },
+  statsRow: { flexDirection: "row", gap: 8, paddingHorizontal: 20, marginBottom: 10 },
+  statCard: { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 10 },
+  statNum: { fontSize: 18, fontWeight: "700" },
+  statLabel: { fontSize: 10, marginTop: 1 },
   modeSwitchWrap: { flexDirection: "row", gap: 8, paddingHorizontal: 20, marginBottom: 12 },
   modeSwitch: { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 10, alignItems: "center" },
   modeSwitchText: { fontSize: 13, fontWeight: "600" },
@@ -499,6 +706,8 @@ const s = StyleSheet.create({
   errorBanner: { paddingHorizontal: 20, marginBottom: 8 },
   errorText: { fontSize: 13, fontWeight: "500" },
   loaderWrap: { paddingVertical: 48, alignItems: "center" },
+  footer: { paddingVertical: 14, alignItems: "center", justifyContent: "center" },
+  footerText: { fontSize: 12, fontWeight: "500" },
   list: { paddingHorizontal: 20, paddingBottom: 20 },
   listHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: "600" },

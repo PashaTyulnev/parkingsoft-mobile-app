@@ -1,4 +1,9 @@
-import { API_BASE_URL, API_BOOKINGS_FILTER_PATH } from "./config";
+import {
+  API_BASE_URL,
+  API_BOOKINGS_FILTER_PATH,
+  API_BOOKINGS_SEARCH_PATH,
+  API_BOOKINGS_ALL_PATH,
+} from "./config";
 import { AuthError } from "./errors";
 
 export const BOOKINGS_FILTER_LIMIT = 100;
@@ -71,6 +76,49 @@ export function buildBookingsFilterUrl(filterType, date = new Date()) {
     page: String(BOOKINGS_FILTER_PAGE),
   });
   return `${API_BASE_URL}${API_BOOKINGS_FILTER_PATH}?${params.toString()}`;
+}
+
+/**
+ * @param {{
+ *  searchString: string;
+ *  type: "arrival" | "departure" | "service" | "changed" | "noshow" | "";
+ *  page: number;
+ *  limit: number;
+ *  dateFrom?: string;
+ *  dateTo?: string;
+ * }} args
+ * @returns {string} Full URL with query string
+ */
+export function buildBookingsSearchUrl(args) {
+  const params = new URLSearchParams({
+    searchString: String(args.searchString ?? "").trim(),
+    type: String(args.type ?? ""),
+    page: String(args.page ?? 1),
+    limit: String(args.limit ?? 10),
+  });
+  // Guard against accidental boolean values like `false` being stringified and sent to the backend.
+  // Backend expects null or YYYY-MM-DD strings.
+  if (typeof args.dateFrom === "string") {
+    const from = args.dateFrom.trim();
+    if (from) params.set("dateFrom", from);
+  }
+  if (typeof args.dateTo === "string") {
+    const to = args.dateTo.trim();
+    if (to) params.set("dateTo", to);
+  }
+  return `${API_BASE_URL}${API_BOOKINGS_SEARCH_PATH}?${params.toString()}`;
+}
+
+/**
+ * @param {{ page: number; limit: number }} args
+ * @returns {string} Full URL with query string
+ */
+export function buildBookingsAllUrl(args) {
+  const params = new URLSearchParams({
+    page: String(args.page ?? 1),
+    limit: String(args.limit ?? 20),
+  });
+  return `${API_BASE_URL}${API_BOOKINGS_ALL_PATH}?${params.toString()}`;
 }
 
 /**
@@ -512,4 +560,105 @@ export async function fetchBookingsFiltered(token, theme, filterType, forDate) {
   return extractBookingsList(data).map((row, i) =>
     normalizeBooking(row, i, theme)
   );
+}
+
+/**
+ * GET /api/external/bookings/search?... with Bearer token.
+ * @param {string} token
+ * @param {{ teal: string; red: string; green: string; yellow: string; blue: string; text2: string }} theme
+ * @param {{
+ *  searchString: string;
+ *  type: "arrival" | "departure" | "service" | "changed" | "noshow" | "";
+ *  page: number;
+ *  limit: number;
+ *  dateFrom?: string;
+ *  dateTo?: string;
+ * }} args
+ * @returns {Promise<{ bookings: unknown[]; amount: number; pagesAmount: number; currentPage: number; limit: number; type: string }>}
+ */
+export async function fetchBookingsSearch(token, theme, args) {
+  const url = buildBookingsSearchUrl(args);
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new AuthError("Session expired or unauthorized");
+  }
+
+  /** @type {any} */
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+
+  if (!res.ok) {
+    const o = /** @type {Record<string, unknown>} */ (data);
+    const msg = o.message || o.detail || o.error || `Bookings request failed (${res.status})`;
+    throw new Error(typeof msg === "string" ? msg : "Bookings request failed");
+  }
+
+  const list = extractBookingsList(data).map((row, i) => normalizeBooking(row, i, theme));
+  const o = /** @type {Record<string, unknown>} */ (data);
+  return {
+    bookings: list,
+    amount: Number(o.amount ?? list.length) || 0,
+    pagesAmount: Number(o.pagesAmount ?? 1) || 1,
+    currentPage: Number(o.currentPage ?? args.page ?? 1) || 1,
+    limit: Number(o.limit ?? args.limit ?? list.length) || 0,
+    type: String(o.type ?? args.type ?? ""),
+  };
+}
+
+/**
+ * GET /api/external/bookings/all?... with Bearer token.
+ * @param {string} token
+ * @param {{ teal: string; red: string; green: string; yellow: string; blue: string; text2: string }} theme
+ * @param {{ page: number; limit: number }} args
+ * @returns {Promise<{ bookings: unknown[]; amount: number; pagesAmount: number; currentPage: number; limit: number; type: string }>}
+ */
+export async function fetchBookingsAll(token, theme, args) {
+  const url = buildBookingsAllUrl(args);
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new AuthError("Session expired or unauthorized");
+  }
+
+  /** @type {any} */
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    data = {};
+  }
+
+  if (!res.ok) {
+    const o = /** @type {Record<string, unknown>} */ (data);
+    const msg = o.message || o.detail || o.error || `Bookings request failed (${res.status})`;
+    throw new Error(typeof msg === "string" ? msg : "Bookings request failed");
+  }
+
+  const list = extractBookingsList(data).map((row, i) => normalizeBooking(row, i, theme));
+  const o = /** @type {Record<string, unknown>} */ (data);
+  return {
+    bookings: list,
+    amount: Number(o.amount ?? list.length) || 0,
+    pagesAmount: Number(o.pagesAmount ?? 1) || 1,
+    currentPage: Number(o.currentPage ?? args.page ?? 1) || 1,
+    limit: Number(o.limit ?? args.limit ?? list.length) || 0,
+    type: String(o.type ?? "both"),
+  };
 }

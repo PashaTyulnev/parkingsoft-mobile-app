@@ -19,7 +19,12 @@ import ShiftsPage from "./components/ShiftsPage";
 import LoginScreen from "./components/LoginScreen";
 import BiometricUnlockScreen from "./components/BiometricUnlockScreen";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
-import { fetchBookingsFiltered } from "./api/bookings";
+import {
+  fetchBookingsAll,
+  fetchBookingsFiltered,
+  fetchBookingsSearch,
+  localDateYyyyMmDd,
+} from "./api/bookings";
 import {
   fetchBookingDetailStatusesAll,
   parseDetailStatusPostResponse,
@@ -68,6 +73,8 @@ const TAB_ITEMS = [
   /** Re-enable with `AbsencesPage` when the feature is ready. */
   { icon: "🏖️", label: "Abwesenheiten", disabled: true },
 ];
+
+const BOOKINGS_ALL_SEARCH_DATE_FROM = "2020-01-01";
 
 function formatTime(value) {
   const h = String(value.getHours()).padStart(2, "0");
@@ -136,7 +143,16 @@ function AppShell() {
   });
   const [bookings, setBookings] = useState([]);
   const [bookingsLoading, setBookingsLoading] = useState(false);
+  const [bookingsLoadingMore, setBookingsLoadingMore] = useState(false);
   const [bookingsError, setBookingsError] = useState("");
+  const [bookingSearchString, setBookingSearchString] = useState("");
+  const [bookingSearchMeta, setBookingSearchMeta] = useState(
+    /** @type {{ amount: number; pagesAmount: number; currentPage: number; limit: number; type: string } | null} */ (null)
+  );
+  const [bookingsAllActive, setBookingsAllActive] = useState(false);
+  const [bookingsAllMeta, setBookingsAllMeta] = useState(
+    /** @type {{ amount: number; pagesAmount: number; currentPage: number; limit: number; type: string } | null} */ (null)
+  );
   const [detailStatusCatalog, setDetailStatusCatalog] = useState([]);
   const [notesByBooking, setNotesByBooking] = useState({});
   const [currentUser, setCurrentUser] = useState(null);
@@ -168,13 +184,65 @@ function AppShell() {
     return teamStatusRows.filter((r) => r.filterCategory === teamStatusFilter);
   }, [teamStatusRows, teamStatusFilter]);
 
-  const loadBookings = useCallback(async () => {
+  /**
+   * @param {{ page?: number; append?: boolean; isLoadMore?: boolean; searchStringOverride?: string }} [opts]
+   */
+  const loadBookings = useCallback(async (opts) => {
     if (!token) return;
-    setBookingsLoading(true);
+    const page = opts?.page ?? 1;
+    const append = Boolean(opts?.append);
+    const isLoadMore = Boolean(opts?.isLoadMore);
+    if (isLoadMore) {
+      setBookingsLoadingMore(true);
+    } else {
+      setBookingsLoading(true);
+    }
     setBookingsError("");
     try {
-      const list = await fetchBookingsFiltered(token, C, dayMode, bookingsListDate);
-      setBookings(list);
+      const q = String(opts?.searchStringOverride ?? bookingSearchString).trim();
+      if (q) {
+        if (bookingsAllActive) {
+          const today = localDateYyyyMmDd(new Date());
+          const { bookings: list, ...meta } = await fetchBookingsSearch(token, C, {
+            searchString: q,
+            type: "",
+            page,
+            limit: 50,
+            dateFrom: BOOKINGS_ALL_SEARCH_DATE_FROM,
+            dateTo: today,
+          });
+          setBookings((prev) => (append ? [...prev, ...list] : list));
+          setBookingSearchMeta(meta);
+          setBookingsAllMeta(null);
+        } else {
+          const day = localDateYyyyMmDd(bookingsListDate);
+          const { bookings: list, ...meta } = await fetchBookingsSearch(token, C, {
+            searchString: q,
+            type: dayMode,
+            page: 1,
+            limit: 50,
+            dateFrom: day,
+            dateTo: day,
+          });
+          setBookings(list);
+          setBookingSearchMeta(meta);
+          setBookingsAllMeta(null);
+        }
+      } else {
+        setBookingSearchMeta(null);
+        if (bookingsAllActive) {
+          const { bookings: list, ...meta } = await fetchBookingsAll(token, C, {
+            page,
+            limit: 50,
+          });
+          setBookings((prev) => (append ? [...prev, ...list] : list));
+          setBookingsAllMeta(meta);
+        } else {
+          const list = await fetchBookingsFiltered(token, C, dayMode, bookingsListDate);
+          setBookings(list);
+          setBookingsAllMeta(null);
+        }
+      }
     } catch (e) {
       if (e instanceof AuthError) {
         await logout();
@@ -183,9 +251,35 @@ function AppShell() {
       }
       setBookingsError(e instanceof Error ? e.message : "Load failed");
     } finally {
-      setBookingsLoading(false);
+      if (isLoadMore) {
+        setBookingsLoadingMore(false);
+      } else {
+        setBookingsLoading(false);
+      }
     }
-  }, [token, logout, dayMode, bookingsListDate]);
+  }, [token, logout, dayMode, bookingsListDate, bookingSearchString, bookingsAllActive]);
+
+  const loadMoreBookings = useCallback(async () => {
+    if (!bookingsAllActive) return;
+    if (bookingsLoading || bookingsLoadingMore) return;
+    const q = bookingSearchString.trim();
+    const meta = q ? bookingSearchMeta : bookingsAllMeta;
+    if (!meta) return;
+    if (meta.currentPage >= meta.pagesAmount) return;
+    await loadBookings({
+      page: meta.currentPage + 1,
+      append: true,
+      isLoadMore: true,
+    });
+  }, [
+    bookingsAllActive,
+    bookingSearchString,
+    bookingsLoading,
+    bookingsLoadingMore,
+    bookingSearchMeta,
+    bookingsAllMeta,
+    loadBookings,
+  ]);
 
   const selectArrivalsToday = useCallback(() => {
     const n = new Date();
@@ -247,10 +341,20 @@ function AppShell() {
   }, [isAuthenticated, loadBookings]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+    // When switching between "day" and "all" view, reload page 1.
+    loadBookings({ page: 1, append: false });
+  }, [isAuthenticated, bookingsAllActive, loadBookings]);
+
+  useEffect(() => {
     if (isAuthenticated) return;
     setBookings([]);
     setNotesByBooking({});
     setCurrentUser(null);
+    setBookingSearchString("");
+    setBookingSearchMeta(null);
+    setBookingsAllActive(false);
+    setBookingsAllMeta(null);
     setEmployeeTime({ employee: "—", checkIn: "", checkOut: "" });
     setTimeTrackerKind("");
     setTimeActionLoading(false);
@@ -634,13 +738,23 @@ function AppShell() {
             onSelectDeparturesToday={selectDeparturesToday}
             onSelectArrivalsTomorrow={selectArrivalsTomorrow}
             onSelectDeparturesTomorrow={selectDeparturesTomorrow}
+            searchString={bookingSearchString}
+            onSearchStringChange={setBookingSearchString}
+            searchMeta={bookingSearchMeta}
+            allActive={bookingsAllActive}
+            onAllActiveChange={setBookingsAllActive}
+            allMeta={bookingsAllMeta}
+            onLoadMore={loadMoreBookings}
+            loadingMore={bookingsLoadingMore}
             notesByBooking={notesByBooking}
             onChangeNote={updateNote}
             onNoteDraftClear={clearNoteDraft}
             detailStatusCatalog={detailStatusCatalog}
             loading={bookingsLoading}
             error={bookingsError}
-            onRefresh={loadBookings}
+            onRefresh={(value) =>
+              loadBookings({ page: 1, append: false, searchStringOverride: value })
+            }
             onDetailStatusPostResult={applyDetailStatusPostToBookings}
           />
         )}

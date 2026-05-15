@@ -93,6 +93,8 @@ function InfoCol({ label, value, mono, color, C }) {
  * @param {(item: object, statusId: string) => Promise<void>} props.onSetDetailStatus
  * @param {boolean} props.detailStatusSaving
  * @param {() => void} props.onPressCashRegister
+ * @param {boolean} props.hasHandoverProtocol
+ * @param {() => void} props.onPressHandoverProtocol
  * @param {object} props.C
  */
 export default function BookingCard({
@@ -106,6 +108,8 @@ export default function BookingCard({
   onSetDetailStatus,
   detailStatusSaving,
   onPressCashRegister,
+  hasHandoverProtocol,
+  onPressHandoverProtocol,
   C,
 }) {
   const [pickedStatusId, setPickedStatusId] = useState(/** @type {string | null} */ (null));
@@ -295,6 +299,32 @@ export default function BookingCard({
               <Text style={s.noteSaveBtnText}>Notiz speichern</Text>
             )}
           </Pressable>
+
+          <Pressable
+            onPress={onPressHandoverProtocol}
+            accessibilityRole="button"
+            accessibilityLabel={
+              hasHandoverProtocol ? "Protokoll öffnen" : "Protokoll erstellen"
+            }
+            style={({ pressed }) => [
+              s.protocolBtn,
+              {
+                backgroundColor: hasHandoverProtocol ? C.surface2 : C.teal,
+                borderColor: hasHandoverProtocol ? C.border : C.teal,
+              },
+              Platform.OS === "web" ? { cursor: "pointer" } : null,
+              pressed ? { opacity: 0.88 } : null,
+            ]}
+          >
+            <Text
+              style={[
+                s.protocolBtnText,
+                { color: hasHandoverProtocol ? C.text : "#04120a" },
+              ]}
+            >
+              {hasHandoverProtocol ? "Protokoll öffnen" : "Protokoll erstellen"}
+            </Text>
+          </Pressable>
         </View>
 
         <View style={s.statusWrap}>
@@ -432,4 +462,14 @@ const s = StyleSheet.create({
   },
   noteSaveBtnDisabled: { opacity: 0.55 },
   noteSaveBtnText: { color: "#fff", fontSize: 14, fontWeight: "600" },
+  protocolBtn: {
+    marginTop: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 11,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 42,
+  },
+  protocolBtnText: { fontSize: 14, fontWeight: "600" },
 });

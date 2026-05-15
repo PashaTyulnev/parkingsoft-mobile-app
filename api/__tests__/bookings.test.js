@@ -1,6 +1,8 @@
 import {
   localDateYyyyMmDd,
   buildBookingsFilterUrl,
+  buildBookingsSearchUrl,
+  buildBookingsAllUrl,
   BOOKINGS_FILTER_LIMIT,
   BOOKINGS_FILTER_PAGE,
   extractBookingsList,
@@ -28,6 +30,8 @@ jest.mock("../config", () => ({
   API_BASE_URL: "https://example.test",
   API_AUTH_PATH: "/api/external/auth",
   API_BOOKINGS_FILTER_PATH: "/api/external/bookings/filter",
+  API_BOOKINGS_SEARCH_PATH: "/api/external/bookings/search",
+  API_BOOKINGS_ALL_PATH: "/api/external/bookings/all",
 }));
 
 describe("localDateYyyyMmDd", () => {
@@ -54,6 +58,49 @@ describe("buildBookingsFilterUrl", () => {
     const d = new Date(2026, 2, 22);
     const url = buildBookingsFilterUrl("departure", d);
     expect(new URL(url).searchParams.get("type")).toBe("departure");
+  });
+});
+
+describe("buildBookingsSearchUrl", () => {
+  it("builds search URL with required params", () => {
+    const url = buildBookingsSearchUrl({
+      searchString: "mustermann",
+      type: "arrival",
+      page: 1,
+      limit: 10,
+      dateFrom: "2026-05-01",
+      dateTo: "2026-05-31",
+    });
+    expect(url).toMatch(/^https:\/\/example\.test\/api\/external\/bookings\/search\?/);
+    const u = new URL(url);
+    expect(u.searchParams.get("searchString")).toBe("mustermann");
+    expect(u.searchParams.get("type")).toBe("arrival");
+    expect(u.searchParams.get("page")).toBe("1");
+    expect(u.searchParams.get("limit")).toBe("10");
+    expect(u.searchParams.get("dateFrom")).toBe("2026-05-01");
+    expect(u.searchParams.get("dateTo")).toBe("2026-05-31");
+  });
+
+  it("omits dateFrom/dateTo when not provided", () => {
+    const url = buildBookingsSearchUrl({
+      searchString: "HX-123",
+      type: "changed",
+      page: 2,
+      limit: 20,
+    });
+    const u = new URL(url);
+    expect(u.searchParams.get("dateFrom")).toBeNull();
+    expect(u.searchParams.get("dateTo")).toBeNull();
+  });
+});
+
+describe("buildBookingsAllUrl", () => {
+  it("builds all URL with paging", () => {
+    const url = buildBookingsAllUrl({ page: 3, limit: 50 });
+    expect(url).toMatch(/^https:\/\/example\.test\/api\/external\/bookings\/all\?/);
+    const u = new URL(url);
+    expect(u.searchParams.get("page")).toBe("3");
+    expect(u.searchParams.get("limit")).toBe("50");
   });
 });
 

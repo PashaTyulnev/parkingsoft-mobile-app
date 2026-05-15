@@ -4,13 +4,13 @@
     "slug": "parkingsoft-mini",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/frankfurtairportparking.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/frankfurtairportparking.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#1f2937"
     },
     "ios": {
       "bundleIdentifier": "de.parkingsoft.mini54",
@@ -20,8 +20,8 @@
       "package": "de.parkingsoft.mini54",
       "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/frankfurtairportparking.png",
+        "backgroundColor": "#1f2937"
       },
       "edgeToEdgeEnabled": true
     },
