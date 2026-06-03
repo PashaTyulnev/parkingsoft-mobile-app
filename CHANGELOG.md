@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Config: Default-API-Host auf **`https://parkingsoft.de`** geändert (vorher `dev.parkingsoft.de`); `api/config.js`, `app.config.js`, `.env.example`.
+
 - Buchungen: **Notiz speichern** — `POST /api/external/bookings/edit` (multipart: `note` als HTML aus Klartext, `bookingId`, `reference`, `internalId` wie Detail-Status: `"null"` oder Zeilen-ID bei `isNative`); `api/bookingEdit.js`; Button unter dem Notizfeld.
 
 - Buchungen: **paymentStatus** (`FB` / `FO` u. a.) aus API auf der Karte als Chip; `bookingPaymentStatusDisplayMeta` + Feld `paymentStatus` in `normalizeBooking`.

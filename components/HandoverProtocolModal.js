@@ -11,15 +11,20 @@ import {
   Alert,
   ActivityIndicator,
 } from "react-native";
-import HandoverProtocolSection from "./HandoverProtocolSection";
+import { numericBookingIdFromListItem } from "../api/bookings";
+import {
+  apiHandoverProtocolHasContent,
+  fetchFullHandoverProtocol,
+  saveFullHandoverProtocolToApi,
+} from "../api/bookingProtocol";
+import { AuthError } from "../api/errors";
+import { useAuth } from "../contexts/AuthContext";
 import {
   cloneHandoverProtocol,
-  finalizeHandoverProtocolForSave,
-  getHandoverProtocol,
-  getOrCreateHandoverProtocol,
+  createEmptyHandoverProtocol,
   handoverProtocolsEqual,
-  saveHandoverProtocol,
 } from "../lib/handoverProtocol";
+import HandoverProtocolSection from "./HandoverProtocolSection";
 
 /**
  * @param {object} props
@@ -27,7 +32,7 @@ import {
  * @param {() => void} props.onClose
  * @param {{ id?: string | number; reference?: string; name?: string; plate?: string } | null} props.booking
  * @param {object} props.C
- * @param {() => void} [props.onSaved] notify parent to refresh open/create label
+ * @param {(hasContent: boolean) => void} [props.onSaved]
  */
 export default function HandoverProtocolModal({
   visible,
@@ -36,32 +41,72 @@ export default function HandoverProtocolModal({
   C,
   onSaved,
 }) {
+  const { token, logout } = useAuth();
   const [draft, setDraft] = useState(
     /** @type {import("../lib/handoverProtocol").HandoverProtocol | null} */ (null)
   );
   const [savedSnapshot, setSavedSnapshot] = useState(
     /** @type {import("../lib/handoverProtocol").HandoverProtocol | null} */ (null)
   );
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(/** @type {string | null} */ (null));
   const [saving, setSaving] = useState(false);
   const [saveFlash, setSaveFlash] = useState(false);
   const saveFlashTimerRef = useRef(/** @type {ReturnType<typeof setTimeout> | null} */ (null));
 
-  const bookingId = booking?.id != null ? String(booking.id) : null;
+  const bookingNumericId = useMemo(
+    () => (booking ? numericBookingIdFromListItem(booking) : null),
+    [booking]
+  );
 
   useEffect(() => {
-    if (!visible || !bookingId) {
+    if (!visible || bookingNumericId == null) {
       setDraft(null);
       setSavedSnapshot(null);
+      setLoadError(null);
+      setLoading(false);
       return;
     }
 
-    const stored = getHandoverProtocol(bookingId);
-    const initial = stored ?? getOrCreateHandoverProtocol(bookingId);
-    const clone = cloneHandoverProtocol(initial);
-    setDraft(clone);
-    setSavedSnapshot(cloneHandoverProtocol(stored ?? createSnapshotForEmpty(bookingId)));
-    setSaveFlash(false);
-  }, [visible, bookingId]);
+    if (!token) {
+      setLoadError("Nicht angemeldet.");
+      setDraft(createEmptyHandoverProtocol(String(bookingNumericId)));
+      setSavedSnapshot(createEmptyHandoverProtocol(String(bookingNumericId)));
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+
+    void (async () => {
+      try {
+        const loaded = await fetchFullHandoverProtocol(token, bookingNumericId);
+        if (cancelled) return;
+        const snapshot = cloneHandoverProtocol(loaded);
+        setDraft(snapshot);
+        setSavedSnapshot(cloneHandoverProtocol(loaded));
+        setSaveFlash(false);
+      } catch (e) {
+        if (cancelled) return;
+        if (e instanceof AuthError) {
+          await logout();
+          onClose();
+          return;
+        }
+        setLoadError(e instanceof Error ? e.message : "Laden fehlgeschlagen");
+        const empty = createEmptyHandoverProtocol(String(bookingNumericId));
+        setDraft(empty);
+        setSavedSnapshot(cloneHandoverProtocol(empty));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, bookingNumericId, token, logout, onClose]);
 
   useEffect(() => {
     return () => {
@@ -85,23 +130,28 @@ export default function HandoverProtocolModal({
   }, []);
 
   const handleSave = useCallback(async () => {
-    if (!draft || saving) return;
+    if (!draft || !savedSnapshot || saving || bookingNumericId == null || !token) return;
     setSaving(true);
     try {
-      const previous = getHandoverProtocol(draft.bookingId);
-      const finalized = finalizeHandoverProtocolForSave(draft, previous);
-      saveHandoverProtocol(finalized);
-      const snapshot = cloneHandoverProtocol(finalized);
+      const saved = await saveFullHandoverProtocolToApi(token, draft, savedSnapshot);
+      const snapshot = cloneHandoverProtocol(saved);
       setDraft(snapshot);
       setSavedSnapshot(snapshot);
       setSaveFlash(true);
       if (saveFlashTimerRef.current) clearTimeout(saveFlashTimerRef.current);
       saveFlashTimerRef.current = setTimeout(() => setSaveFlash(false), 2500);
-      onSaved?.();
+      onSaved?.(apiHandoverProtocolHasContent(saved));
+    } catch (e) {
+      if (e instanceof AuthError) {
+        await logout();
+        onClose();
+        return;
+      }
+      Alert.alert("Protokoll", e instanceof Error ? e.message : "Speichern fehlgeschlagen");
     } finally {
       setSaving(false);
     }
-  }, [draft, saving, onSaved]);
+  }, [draft, savedSnapshot, saving, bookingNumericId, token, logout, onClose, onSaved]);
 
   const requestClose = useCallback(() => {
     if (!isDirty) {
@@ -150,6 +200,19 @@ export default function HandoverProtocolModal({
           </TouchableOpacity>
         </View>
 
+        {loading ? (
+          <View style={s.loaderStrip}>
+            <ActivityIndicator color={C.blue} />
+            <Text style={[s.loaderText, { color: C.text2 }]}>Protokoll wird geladen …</Text>
+          </View>
+        ) : null}
+
+        {loadError ? (
+          <View style={[s.banner, { borderColor: C.yellow, backgroundColor: "rgba(255,214,10,0.12)" }]}>
+            <Text style={[s.bannerText, { color: C.yellow }]}>{loadError}</Text>
+          </View>
+        ) : null}
+
         {isDirty ? (
           <View style={[s.dirtyBanner, { backgroundColor: "rgba(255,159,10,0.15)", borderColor: C.orange }]}>
             <Text style={[s.dirtyBannerText, { color: C.orange }]}>
@@ -170,7 +233,7 @@ export default function HandoverProtocolModal({
           keyboardShouldPersistTaps="handled"
         >
           <Text style={[s.intro, { color: C.text2 }]}>
-            Dokumentieren Sie Fahrzeugannahme und -rückgabe mit Notizen und Fotos.
+            Dokumentieren Sie Fahrzeugannahme und -rückgabe mit Notizen, Fotos und Unterschrift.
           </Text>
 
           <HandoverProtocolSection
@@ -193,13 +256,13 @@ export default function HandoverProtocolModal({
         <View style={[s.footer, { borderTopColor: C.border, backgroundColor: C.bg }]}>
           <TouchableOpacity
             onPress={() => void handleSave()}
-            disabled={saving || !isDirty}
+            disabled={saving || !isDirty || loading}
             accessibilityRole="button"
             accessibilityLabel="Protokoll speichern"
             style={[
               s.saveBtn,
               { backgroundColor: C.blue },
-              (!isDirty || saving) && { opacity: 0.5 },
+              (saving || !isDirty || loading) && { opacity: 0.5 },
             ]}
           >
             {saving ? (
@@ -214,15 +277,6 @@ export default function HandoverProtocolModal({
       </SafeAreaView>
     </Modal>
   );
-}
-
-/**
- * @param {string} bookingId
- * @returns {import("../lib/handoverProtocol").HandoverProtocol}
- */
-function createSnapshotForEmpty(bookingId) {
-  const p = getOrCreateHandoverProtocol(bookingId);
-  return cloneHandoverProtocol(p);
 }
 
 const s = StyleSheet.create({
@@ -247,6 +301,23 @@ const s = StyleSheet.create({
     justifyContent: "center",
   },
   closeBtnText: { fontSize: 18, fontWeight: "600" },
+  loaderStrip: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 10,
+  },
+  loaderText: { fontSize: 13, fontWeight: "500" },
+  banner: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  bannerText: { fontSize: 13, fontWeight: "600" },
   dirtyBanner: {
     marginHorizontal: 16,
     marginTop: 10,

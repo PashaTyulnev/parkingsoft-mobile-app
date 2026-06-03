@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -8,11 +8,14 @@ import {
   StyleSheet,
   ActivityIndicator,
   Platform,
+  Linking,
+  Alert,
 } from "react-native";
 import { catalogStatusButtonLabel } from "../api/bookingDetailStatus";
 import {
   bookingPaymentStatusDisplayMeta,
   bookingProductDisplayMeta,
+  bookingPhoneTelUri,
   isDetailLegMissing,
 } from "../api/bookings";
 
@@ -82,9 +85,62 @@ function InfoCol({ label, value, mono, color, C }) {
 }
 
 /**
+ * @param {DayMode} dayMode
+ * @param {boolean} allActive
+ * @param {{ arrivalTime?: string; departureTime?: string; pax?: number }} item
+ */
+function compactTimeLabel(dayMode, allActive, item) {
+  const arr = item.arrivalTime ?? "—";
+  const dep = item.departureTime ?? "—";
+  const pax = `${item.pax ?? 1} Pax`;
+  if (allActive) {
+    return `Ank. ${arr} · Rück. ${dep} · ${pax}`;
+  }
+  if (dayMode === "departure") {
+    return `Rückreise ${dep} · ${pax}`;
+  }
+  return `Ankunft ${arr} · ${pax}`;
+}
+
+/**
+ * @param {object} props
+ * @param {ReturnType<typeof bookingProductDisplayMeta>} props.productMeta
+ * @param {object | null} props.productChipColors
+ * @param {ReturnType<typeof bookingPaymentStatusDisplayMeta>} props.payMeta
+ * @param {object | null} props.payChipColors
+ * @param {{ label: string; color: string; bg: string }} props.statusMeta
+ */
+function BookingTopBadges({ productMeta, productChipColors, payMeta, payChipColors, statusMeta }) {
+  return (
+    <View style={s.cardTopBadges}>
+      {productMeta && productChipColors ? (
+        <View style={[s.productChip, { backgroundColor: productChipColors.bg }]}>
+          <Text style={[s.productChipText, { color: productChipColors.color }]}>
+            {productMeta.label}
+          </Text>
+        </View>
+      ) : null}
+      {payMeta && payChipColors ? (
+        <View style={[s.productChip, { backgroundColor: payChipColors.bg }]}>
+          <Text style={[s.productChipText, { color: payChipColors.color }]}>
+            {payMeta.label}
+          </Text>
+        </View>
+      ) : null}
+      <View style={[s.badge, { backgroundColor: statusMeta.bg }]}>
+        <Text style={[s.badgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+      </View>
+    </View>
+  );
+}
+
+/**
  * @param {object} props
  * @param {object} props.item
  * @param {DayMode} props.dayMode
+ * @param {boolean} props.allActive
+ * @param {boolean} props.expanded
+ * @param {() => void} props.onToggleExpand
  * @param {string} props.note Plain text (API `notice` stripped via `item.remark` until user edits)
  * @param {(id: string, note: string) => void} props.onChangeNote
  * @param {() => void} props.onPressSaveNote
@@ -100,6 +156,9 @@ function InfoCol({ label, value, mono, color, C }) {
 export default function BookingCard({
   item,
   dayMode,
+  allActive,
+  expanded,
+  onToggleExpand,
   note,
   onChangeNote,
   onPressSaveNote,
@@ -150,8 +209,13 @@ export default function BookingCard({
   const accentColor = sideAccentColorForDayMode(dayMode, item, statusMeta.color);
   const departureFirst = dayMode === "departure";
 
-  const arrivalTimeCol = <InfoCol label="Ankunft" value={item.arrival} C={C} />;
-  const departureTimeCol = <InfoCol label="Rückreise" value={item.departure} C={C} />;
+  const arrivalTimeCol = (
+    <InfoCol label="Ankunft" value={item.arrivalTime ?? "—"} mono C={C} />
+  );
+  const departureTimeCol = (
+    <InfoCol label="Rückreise" value={item.departureTime ?? "—"} mono C={C} />
+  );
+  const paxCol = <InfoCol label="Passagiere" value={String(item.pax ?? 1)} C={C} />;
   const daysCol = <InfoCol label="Tage" value={String(item.days)} C={C} />;
 
   const arrivalLegRow = (
@@ -177,49 +241,122 @@ export default function BookingCard({
     </View>
   );
 
+  const timeLine = compactTimeLabel(dayMode, allActive, item);
+  const hasPhone = Boolean(item.phone);
+
+  const handleCall = useCallback(() => {
+    const uri = bookingPhoneTelUri(item.phone);
+    if (!uri) return;
+    void (async () => {
+      try {
+        const supported = await Linking.canOpenURL(uri);
+        if (!supported) {
+          Alert.alert("Anrufen", "Auf diesem Gerät ist kein Telefon verfügbar.");
+          return;
+        }
+        await Linking.openURL(uri);
+      } catch {
+        Alert.alert("Anrufen", "Der Anruf konnte nicht gestartet werden.");
+      }
+    })();
+  }, [item.phone]);
+
   return (
-    <View style={[s.card, { backgroundColor: C.surface, borderColor: C.border }]}>
+    <View
+      style={[
+        s.card,
+        { backgroundColor: C.surface, borderColor: C.border },
+        !expanded && s.cardCompact,
+      ]}
+    >
       <View style={[s.cardAccent, { backgroundColor: accentColor }]} />
-      <View style={s.cardInner}>
-        <View style={s.cardTop}>
-          <View>
-            <Text style={[s.cardName, { color: C.text }]}>{item.name}</Text>
-            <Text style={[s.cardId, { color: C.text2 }]}>
-              {item.reference ?? item.id} · {item.pax} Pax
+      <View style={[s.cardInner, !expanded && s.cardInnerCompact]}>
+        <Pressable
+          onPress={onToggleExpand}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? "Buchung einklappen" : "Buchung ausklappen"}
+          style={({ pressed }) => [
+            expanded ? s.cardTop : s.compactHeader,
+            pressed && { opacity: 0.92 },
+            Platform.OS === "web" ? { cursor: "pointer" } : null,
+          ]}
+        >
+          <View style={s.compactMain}>
+            <Text style={[s.cardName, { color: C.text }]} numberOfLines={expanded ? 2 : 1}>
+              {item.name}
+            </Text>
+            {expanded ? (
+              <Text style={[s.cardId, { color: C.text2 }]}>
+                {item.reference ?? item.id} · {item.pax} Pax
+              </Text>
+            ) : (
+              <Text style={[s.compactTime, s.mono, { color: C.text2 }]} numberOfLines={1}>
+                {timeLine}
+              </Text>
+            )}
+          </View>
+          <View style={s.compactHeaderRight}>
+            <BookingTopBadges
+              productMeta={productMeta}
+              productChipColors={productChipColors}
+              payMeta={payMeta}
+              payChipColors={payChipColors}
+              statusMeta={statusMeta}
+            />
+            {hasPhone ? (
+              <TouchableOpacity
+                onPress={handleCall}
+                accessibilityRole="button"
+                accessibilityLabel={`Anrufen ${item.phoneDisplay ?? item.phone}`}
+                style={[s.callBtnCompact, { backgroundColor: C.green, borderColor: C.green }]}
+              >
+                <Text style={s.callBtnCompactIcon} allowFontScaling={false}>
+                  📞
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+            <Text style={[s.expandChevron, { color: C.text3 }]} allowFontScaling={false}>
+              {expanded ? "▲" : "▼"}
             </Text>
           </View>
-          <View style={s.cardTopBadges}>
-            {productMeta && productChipColors ? (
-              <View style={[s.productChip, { backgroundColor: productChipColors.bg }]}>
-                <Text style={[s.productChipText, { color: productChipColors.color }]}>
-                  {productMeta.label}
+        </Pressable>
+
+        {!expanded ? null : (
+          <>
+        {hasPhone ? (
+          <TouchableOpacity
+            onPress={handleCall}
+            accessibilityRole="button"
+            accessibilityLabel="Anrufen"
+            style={[s.callBtn, { backgroundColor: "rgba(48,209,88,0.15)", borderColor: C.green }]}
+          >
+            <Text style={s.callBtnIcon} allowFontScaling={false}>
+              📞
+            </Text>
+            <View style={s.callBtnTextWrap}>
+              <Text style={[s.callBtnTitle, { color: C.green }]}>Anrufen</Text>
+              {item.phoneDisplay ? (
+                <Text style={[s.callBtnNumber, { color: C.text2 }]} numberOfLines={1}>
+                  {item.phoneDisplay}
                 </Text>
-              </View>
-            ) : null}
-            {payMeta && payChipColors ? (
-              <View style={[s.productChip, { backgroundColor: payChipColors.bg }]}>
-                <Text style={[s.productChipText, { color: payChipColors.color }]}>
-                  {payMeta.label}
-                </Text>
-              </View>
-            ) : null}
-            <View style={[s.badge, { backgroundColor: statusMeta.bg }]}>
-              <Text style={[s.badgeText, { color: statusMeta.color }]}>{statusMeta.label}</Text>
+              ) : null}
             </View>
-          </View>
-        </View>
+          </TouchableOpacity>
+        ) : null}
 
         <View style={s.infoRow}>
           {departureFirst ? (
             <>
               {departureTimeCol}
               {arrivalTimeCol}
+              {paxCol}
               {daysCol}
             </>
           ) : (
             <>
               {arrivalTimeCol}
               {departureTimeCol}
+              {paxCol}
               {daysCol}
             </>
           )}
@@ -371,6 +508,8 @@ export default function BookingCard({
             })}
           </View>
         </View>
+          </>
+        )}
       </View>
     </View>
   );
@@ -378,10 +517,51 @@ export default function BookingCard({
 
 const s = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 16, marginBottom: 10, flexDirection: "row", overflow: "hidden" },
+  cardCompact: { marginBottom: 6, borderRadius: 12 },
   cardAccent: { width: 3 },
   cardInner: { flex: 1, padding: 14 },
+  cardInnerCompact: { paddingVertical: 10, paddingHorizontal: 12 },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 },
-  cardTopBadges: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, maxWidth: "52%" },
+  compactHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  compactMain: { flex: 1, minWidth: 0, paddingRight: 6 },
+  compactHeaderRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexShrink: 0,
+    gap: 6,
+    maxWidth: "58%",
+  },
+  compactTime: { fontSize: 12, fontWeight: "500", marginTop: 3 },
+  expandChevron: { fontSize: 11, fontWeight: "700", marginLeft: 2 },
+  callBtnCompact: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  callBtnCompactIcon: { fontSize: 18 },
+  callBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+  },
+  callBtnIcon: { fontSize: 22 },
+  callBtnTextWrap: { flex: 1, minWidth: 0 },
+  callBtnTitle: { fontSize: 15, fontWeight: "700" },
+  callBtnNumber: { fontSize: 13, marginTop: 2, fontWeight: "500" },
+  cardTopBadges: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" },
   cardName: { fontSize: 15, fontWeight: "600" },
   cardId: { fontSize: 11, fontFamily: "monospace", marginTop: 2 },
   productChip: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 100 },

@@ -17,10 +17,6 @@ import BookingCard from "./BookingCard";
 import BookingCashModal from "./BookingCashModal";
 import HandoverProtocolModal from "./HandoverProtocolModal";
 import {
-  getHandoverProtocol,
-  handoverProtocolHasContent,
-} from "../lib/handoverProtocol";
-import {
   isDetailLegFinishedSuccess,
   isDetailLegChanged,
   isDetailLegMissing,
@@ -117,7 +113,10 @@ export default function BookingsPage({
   const [detailStatusSavingId, setDetailStatusSavingId] = useState(/** @type {string | null} */ (null));
   const [cashBooking, setCashBooking] = useState(/** @type {object | null} */ (null));
   const [protocolBooking, setProtocolBooking] = useState(/** @type {object | null} */ (null));
-  const [protocolStoreRevision, setProtocolStoreRevision] = useState(0);
+  const [protocolExistsByBooking, setProtocolExistsByBooking] = useState(
+    /** @type {Record<string, boolean>} */ ({})
+  );
+  const [expandedBookingId, setExpandedBookingId] = useState(/** @type {string | null} */ (null));
   const [noteSavingId, setNoteSavingId] = useState(/** @type {string | null} */ (null));
   const [searchDraft, setSearchDraft] = useState(String(searchString ?? ""));
   const [headerCollapsed, setHeaderCollapsed] = useState(false);
@@ -125,6 +124,10 @@ export default function BookingsPage({
   useEffect(() => {
     setSearchDraft(String(searchString ?? ""));
   }, [searchString]);
+
+  useEffect(() => {
+    setExpandedBookingId(null);
+  }, [dayMode, activeFilter, bookingsListDate, allActive]);
 
   useEffect(() => {
     const next = String(searchDraft ?? "");
@@ -284,11 +287,19 @@ export default function BookingsPage({
   const departuresTomorrowActive =
     dayMode === DAY_MODE.DEPARTURE && isSameLocalDay(bookingsListDate, t1);
 
+  const handleToggleBookingExpand = useCallback((item) => {
+    const id = String(item.id);
+    setExpandedBookingId((prev) => (prev === id ? null : id));
+  }, []);
+
   const renderItem = useCallback(
     ({ item }) => (
       <BookingCard
         item={item}
         dayMode={dayMode}
+        allActive={allActive}
+        expanded={expandedBookingId === String(item.id)}
+        onToggleExpand={() => handleToggleBookingExpand(item)}
         note={notesByBooking[item.id] ?? item.remark}
         onChangeNote={onChangeNote}
         onPressSaveNote={() => void handleSaveNote(item)}
@@ -297,13 +308,16 @@ export default function BookingsPage({
         onSetDetailStatus={handleSetDetailStatus}
         detailStatusSaving={detailStatusSavingId === String(item.id)}
         onPressCashRegister={() => setCashBooking(item)}
-        hasHandoverProtocol={handoverProtocolHasContent(getHandoverProtocol(item.id))}
+        hasHandoverProtocol={protocolExistsByBooking[String(item.id)] === true}
         onPressHandoverProtocol={() => setProtocolBooking(item)}
         C={C}
       />
     ),
     [
       dayMode,
+      allActive,
+      expandedBookingId,
+      handleToggleBookingExpand,
       notesByBooking,
       onChangeNote,
       handleSaveNote,
@@ -311,7 +325,7 @@ export default function BookingsPage({
       detailStatusOptionsForMode,
       handleSetDetailStatus,
       detailStatusSavingId,
-      protocolStoreRevision,
+      protocolExistsByBooking,
       C,
     ]
   );
@@ -662,7 +676,14 @@ export default function BookingsPage({
         onClose={() => setProtocolBooking(null)}
         booking={protocolBooking}
         C={C}
-        onSaved={() => setProtocolStoreRevision((v) => v + 1)}
+        onSaved={(hasContent) => {
+          if (protocolBooking?.id != null) {
+            setProtocolExistsByBooking((prev) => ({
+              ...prev,
+              [String(protocolBooking.id)]: hasContent,
+            }));
+          }
+        }}
       />
     </View>
   );

@@ -1,4 +1,4 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -8,14 +8,16 @@ import {
   StyleSheet,
   Platform,
   Alert,
+  Image,
 } from "react-native";
-import SignaturePad, { signatureStrokesHasInk } from "./SignaturePad";
+import SignaturePad from "./SignaturePad";
+import SignatureCaptureModal from "./SignatureCaptureModal";
 import {
   createEmptyHandoverProtocolSignature,
   formatHandoverProtocolTimestamp,
   handoverProtocolSignatureHasContent,
-  pickMockHandoverProtocolPhoto,
 } from "../lib/handoverProtocol";
+import { pickHandoverProtocolPhotoInteractive } from "../lib/handoverProtocolPhoto";
 
 /**
  * @param {object} props
@@ -32,34 +34,30 @@ export default function HandoverProtocolSection({
   C,
   accentColor,
 }) {
+  const [signatureModalVisible, setSignatureModalVisible] = useState(false);
   const statusLabel = formatHandoverProtocolTimestamp(section.updatedAt);
   const signature = section.customerSignature ?? createEmptyHandoverProtocolSignature();
   const signatureSignedLabel = formatHandoverProtocolTimestamp(signature.signedAt);
+  const hasSignature = handoverProtocolSignatureHasContent(signature);
+  const strokePreview =
+    Array.isArray(signature.strokes) &&
+    signature.strokes.some((stroke) => Array.isArray(stroke) && stroke.length > 0);
+  const readOnly = section.finalized === true;
 
   const handleAddPhoto = useCallback(() => {
-    Alert.alert(
-      "Foto hinzufügen",
-      "Die Kamera-Integration folgt. Für jetzt wird ein Platzhalter-Foto angelegt.",
-      [
-        { text: "Abbrechen", style: "cancel" },
-        {
-          text: "Platzhalter-Foto",
-          onPress: () => {
-            void (async () => {
-              const photo = await pickMockHandoverProtocolPhoto();
-              if (!photo) return;
-              onChangeSection({
-                photos: [...section.photos, photo],
-              });
-            })();
-          },
-        },
-      ]
-    );
-  }, [onChangeSection, section.photos]);
+    if (readOnly) return;
+    void (async () => {
+      const photo = await pickHandoverProtocolPhotoInteractive();
+      if (!photo) return;
+      onChangeSection({
+        photos: [...section.photos, photo],
+      });
+    })();
+  }, [onChangeSection, section.photos, readOnly]);
 
   const handleRemovePhoto = useCallback(
     (photoId) => {
+      if (readOnly) return;
       Alert.alert("Foto entfernen?", "Das Foto wird aus dem Protokoll entfernt.", [
         { text: "Abbrechen", style: "cancel" },
         {
@@ -73,7 +71,7 @@ export default function HandoverProtocolSection({
         },
       ]);
     },
-    [onChangeSection, section.photos]
+    [onChangeSection, section.photos, readOnly]
   );
 
   return (
@@ -86,7 +84,9 @@ export default function HandoverProtocolSection({
     >
       <View style={s.cardHeader}>
         <Text style={[s.cardTitle, { color: C.text }]}>{title}</Text>
-        {statusLabel ? (
+        {section.finalized ? (
+          <Text style={[s.statusText, { color: C.green }]}>Finalisiert</Text>
+        ) : statusLabel ? (
           <Text style={[s.statusText, { color: C.text3 }]}>Zuletzt: {statusLabel}</Text>
         ) : (
           <Text style={[s.statusText, { color: C.text3 }]}>Noch nicht gespeichert</Text>
@@ -96,6 +96,7 @@ export default function HandoverProtocolSection({
       <Text style={[s.fieldLabel, { color: C.text3 }]}>Notizen</Text>
       <TextInput
         value={section.notes}
+        editable={!readOnly}
         onChangeText={(notes) => onChangeSection({ notes })}
         placeholder="Schäden, Kilometerstand, Zubehör …"
         placeholderTextColor={C.text3}
@@ -116,12 +117,19 @@ export default function HandoverProtocolSection({
               key={photo.id}
               style={[s.photoTile, { backgroundColor: C.surface2, borderColor: C.border }]}
             >
-              <Text style={s.photoPlaceholderIcon} allowFontScaling={false}>
-                📷
-              </Text>
-              <Text style={[s.photoPlaceholderLabel, { color: C.text2 }]} numberOfLines={1}>
-                Foto {index + 1}
-              </Text>
+              {photo.uri && !photo.uri.startsWith("mock://") ? (
+                <Image source={{ uri: photo.uri }} style={s.photoImage} resizeMode="cover" />
+              ) : (
+                <>
+                  <Text style={s.photoPlaceholderIcon} allowFontScaling={false}>
+                    📷
+                  </Text>
+                  <Text style={[s.photoPlaceholderLabel, { color: C.text2 }]} numberOfLines={1}>
+                    Foto {index + 1}
+                  </Text>
+                </>
+              )}
+              {!readOnly ? (
               <Pressable
                 onPress={() => handleRemovePhoto(photo.id)}
                 accessibilityRole="button"
@@ -134,11 +142,13 @@ export default function HandoverProtocolSection({
               >
                 <Text style={s.photoRemoveText}>✕</Text>
               </Pressable>
+              ) : null}
             </View>
           ))}
         </View>
       )}
 
+      {!readOnly ? (
       <TouchableOpacity
         onPress={handleAddPhoto}
         accessibilityRole="button"
@@ -147,28 +157,76 @@ export default function HandoverProtocolSection({
       >
         <Text style={[s.addPhotoBtnText, { color: C.blue }]}>Foto hinzufügen</Text>
       </TouchableOpacity>
+      ) : null}
 
       <Text style={[s.fieldLabel, { color: C.text3, marginTop: 16 }]}>Unterschrift Kunde</Text>
-      {signatureSignedLabel && handoverProtocolSignatureHasContent(signature) ? (
+      {signatureSignedLabel && hasSignature ? (
         <Text style={[s.signatureMeta, { color: C.text3 }]}>
           Unterschrieben: {signatureSignedLabel}
         </Text>
-      ) : (
-        <Text style={[s.signatureMeta, { color: C.text3 }]}>
-          Bestätigung durch Unterschrift auf dem Display
+      ) : null}
+
+      <Pressable
+        onPress={() => !readOnly && setSignatureModalVisible(true)}
+        disabled={readOnly}
+        accessibilityRole="button"
+        accessibilityLabel={hasSignature ? "Unterschrift anzeigen" : "Unterschrift erfassen"}
+        style={({ pressed }) => [
+          s.signatureField,
+          { borderColor: C.border, backgroundColor: "#fff" },
+          !readOnly && pressed && { opacity: 0.92 },
+        ]}
+      >
+        {strokePreview ? (
+          <SignaturePad
+            strokes={signature.strokes}
+            readOnly
+            compact
+            C={C}
+            showClear={false}
+            onChangeStrokes={() => {}}
+          />
+        ) : signature.signatureData ? (
+          <Image
+            source={{ uri: signature.signatureData }}
+            style={s.signatureImage}
+            resizeMode="contain"
+          />
+        ) : (
+          <Text style={[s.signatureFieldPlaceholder, { color: C.text3 }]}>
+            Tippen zum Unterschreiben
+          </Text>
+        )}
+      </Pressable>
+
+      {!readOnly ? (
+      <TouchableOpacity
+        onPress={() => setSignatureModalVisible(true)}
+        accessibilityRole="button"
+        accessibilityLabel={hasSignature ? "Unterschrift ändern" : "Unterschrift erfassen"}
+        style={[s.signatureOpenBtn, { borderColor: C.border, backgroundColor: C.surface }]}
+      >
+        <Text style={[s.signatureOpenBtnText, { color: C.blue }]}>
+          {hasSignature ? "Unterschrift ändern" : "Unterschrift erfassen"}
         </Text>
-      )}
-      <SignaturePad
-        strokes={signature.strokes}
-        onChangeStrokes={(strokes) =>
+      </TouchableOpacity>
+      ) : null}
+
+      <SignatureCaptureModal
+        visible={signatureModalVisible}
+        onClose={() => setSignatureModalVisible(false)}
+        initialStrokes={signature.strokes}
+        title={`Unterschrift — ${title}`}
+        C={C}
+        onConfirm={(strokes) =>
           onChangeSection({
             customerSignature: {
               strokes,
-              signedAt: signatureStrokesHasInk(strokes) ? signature.signedAt : null,
+              signedAt: null,
+              signatureData: null,
             },
           })
         }
-        C={C}
       />
     </View>
   );
@@ -215,6 +273,7 @@ const s = StyleSheet.create({
   },
   photoPlaceholderIcon: { fontSize: 28, marginBottom: 4 },
   photoPlaceholderLabel: { fontSize: 11, fontWeight: "600" },
+  photoImage: { width: "100%", height: "100%", borderRadius: 8 },
   photoRemove: {
     position: "absolute",
     top: 6,
@@ -240,4 +299,27 @@ const s = StyleSheet.create({
   },
   addPhotoBtnText: { fontSize: 14, fontWeight: "600" },
   signatureMeta: { fontSize: 12, marginBottom: 8, fontWeight: "500" },
+  signatureField: {
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: "hidden",
+    marginBottom: 8,
+    height: 100,
+    justifyContent: "center",
+  },
+  signatureFieldPlaceholder: {
+    fontSize: 13,
+    fontWeight: "500",
+    fontStyle: "italic",
+    textAlign: "center",
+    paddingHorizontal: 12,
+  },
+  signatureImage: { width: "100%", height: "100%" },
+  signatureOpenBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  signatureOpenBtnText: { fontSize: 14, fontWeight: "600" },
 });

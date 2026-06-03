@@ -1,14 +1,38 @@
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
   PanResponder,
   Pressable,
   StyleSheet,
+  Platform,
 } from "react-native";
+import {
+  lineSegmentsScaledToFit,
+  COMPACT_PADDING,
+} from "../lib/signatureRaster";
 
 const STROKE_WIDTH = 2.5;
+const COMPACT_STROKE_WIDTH = 1.8;
 const MIN_POINT_DISTANCE = 2;
+
+/**
+ * @param {Array<Array<{ x: number; y: number }>>} strokes
+ * @returns {Array<{ from: { x: number; y: number }; to: { x: number; y: number }; key: string }>}
+ */
+function lineSegmentsFromStrokes(strokes) {
+  const segments = [];
+  for (const stroke of strokes) {
+    for (let i = 1; i < stroke.length; i += 1) {
+      segments.push({
+        from: stroke[i - 1],
+        to: stroke[i],
+        key: `${segments.length}`,
+      });
+    }
+  }
+  return segments;
+}
 
 /**
  * @param {{ x: number; y: number }} a
@@ -43,35 +67,72 @@ export function cloneSignatureStrokes(strokes) {
  * @param {object} props
  * @param {Array<Array<{ x: number; y: number }>>} props.strokes
  * @param {(strokes: Array<Array<{ x: number; y: number }>>) => void} props.onChangeStrokes
+ * @param {(active: boolean) => void} [props.onDrawingActiveChange] while finger is down — lock parent scroll
  * @param {object} props.C
  * @param {boolean} [props.disabled]
+ * @param {boolean} [props.readOnly] display only, no drawing
+ * @param {boolean} [props.large] fill available height (signature modal)
+ * @param {boolean} [props.showClear] show inline clear link (default true when not readOnly/large)
+ * @param {boolean} [props.compact] small preview height (read-only thumbnail)
  */
-export default function SignaturePad({ strokes, onChangeStrokes, C, disabled = false }) {
-  const strokesRef = useRef(strokes);
-  strokesRef.current = strokes;
+export default function SignaturePad({
+  strokes,
+  onChangeStrokes,
+  onDrawingActiveChange,
+  C,
+  disabled = false,
+  readOnly = false,
+  large = false,
+  compact = false,
+  showClear,
+}) {
+  const interactive = !disabled && !readOnly;
+  const showClearButton = showClear ?? (interactive && !large);
+  const [displayStrokes, setDisplayStrokes] = useState(() => cloneSignatureStrokes(strokes));
+  const strokesRef = useRef(displayStrokes);
+  const activeStrokeRef = useRef(/** @type {{ x: number; y: number }[] | null} */ (null));
+  const isDrawingRef = useRef(false);
 
   const [layout, setLayout] = useState(/** @type {{ width: number; height: number } | null} */ (null));
-  const activeStrokeRef = useRef(/** @type {{ x: number; y: number }[] | null} */ (null));
 
-  const commitStrokes = useCallback(
-    (nextStrokes) => {
-      onChangeStrokes(cloneSignatureStrokes(nextStrokes));
+  useEffect(() => {
+    if (isDrawingRef.current) return;
+    const next = cloneSignatureStrokes(strokes);
+    strokesRef.current = next;
+    setDisplayStrokes(next);
+  }, [strokes]);
+
+  const setDrawingActive = useCallback(
+    (active) => {
+      if (isDrawingRef.current === active) return;
+      isDrawingRef.current = active;
+      onDrawingActiveChange?.(active);
     },
-    [onChangeStrokes]
+    [onDrawingActiveChange]
   );
+
+  const finishStroke = useCallback(() => {
+    activeStrokeRef.current = null;
+    setDrawingActive(false);
+    onChangeStrokes(cloneSignatureStrokes(strokesRef.current));
+  }, [onChangeStrokes, setDrawingActive]);
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onStartShouldSetPanResponder: () => !disabled,
-        onStartShouldSetPanResponderCapture: () => !disabled,
-        onMoveShouldSetPanResponder: () => !disabled,
-        onMoveShouldSetPanResponderCapture: () => !disabled,
+        onStartShouldSetPanResponder: () => interactive,
+        onStartShouldSetPanResponderCapture: () => interactive,
+        onMoveShouldSetPanResponder: () => interactive,
+        onMoveShouldSetPanResponderCapture: () => interactive,
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (evt) => {
+          setDrawingActive(true);
           const { locationX, locationY } = evt.nativeEvent;
-          activeStrokeRef.current = [{ x: locationX, y: locationY }];
-          commitStrokes([...strokesRef.current, activeStrokeRef.current]);
+          const stroke = [{ x: locationX, y: locationY }];
+          activeStrokeRef.current = stroke;
+          const nextStrokes = [...strokesRef.current, stroke];
+          strokesRef.current = nextStrokes;
+          setDisplayStrokes(cloneSignatureStrokes(nextStrokes));
         },
         onPanResponderMove: (evt) => {
           const stroke = activeStrokeRef.current;
@@ -81,55 +142,72 @@ export default function SignaturePad({ strokes, onChangeStrokes, C, disabled = f
           const next = { x: locationX, y: locationY };
           if (last && pointDistance(last, next) < MIN_POINT_DISTANCE) return;
           stroke.push(next);
-          commitStrokes([...strokesRef.current.slice(0, -1), [...stroke]]);
+          const nextStrokes = [...strokesRef.current.slice(0, -1), [...stroke]];
+          strokesRef.current = nextStrokes;
+          setDisplayStrokes(nextStrokes);
         },
-        onPanResponderRelease: () => {
-          activeStrokeRef.current = null;
-        },
-        onPanResponderTerminate: () => {
-          activeStrokeRef.current = null;
-        },
+        onPanResponderRelease: finishStroke,
+        onPanResponderTerminate: finishStroke,
       }),
-    [commitStrokes, disabled]
+    [interactive, finishStroke, setDrawingActive]
   );
 
   const lineSegments = useMemo(() => {
-    const segments = [];
-    for (const stroke of strokes) {
-      for (let i = 1; i < stroke.length; i += 1) {
-        segments.push({ from: stroke[i - 1], to: stroke[i], key: `${segments.length}` });
-      }
+    if (compact) {
+      if (!layout || layout.width <= 0 || layout.height <= 0) return [];
+      return lineSegmentsScaledToFit(
+        displayStrokes,
+        layout.width,
+        layout.height,
+        COMPACT_PADDING
+      );
     }
-    return segments;
-  }, [strokes]);
+    return lineSegmentsFromStrokes(displayStrokes);
+  }, [displayStrokes, compact, layout]);
 
-  const hasInk = signatureStrokesHasInk(strokes);
+  const strokeThickness = compact ? COMPACT_STROKE_WIDTH : STROKE_WIDTH;
+
+  const hasInk = signatureStrokesHasInk(displayStrokes);
 
   const handleClear = useCallback(() => {
     activeStrokeRef.current = null;
-    commitStrokes([]);
-  }, [commitStrokes]);
+    strokesRef.current = [];
+    setDisplayStrokes([]);
+    onChangeStrokes([]);
+  }, [onChangeStrokes]);
 
   return (
-    <View>
+    <View style={[large ? s.wrapLarge : null, compact ? s.wrapCompact : null]}>
       <View
+        collapsable={false}
         onLayout={(e) => {
           const { width, height } = e.nativeEvent.layout;
           setLayout({ width, height });
         }}
         style={[
           s.pad,
+          large ? s.padLarge : null,
+          compact ? s.padCompact : null,
           {
             borderColor: C.border,
-            backgroundColor: disabled ? C.surface2 : "#fff",
+            backgroundColor:
+              readOnly && compact ? "#fff" : readOnly || disabled ? C.surface2 : "#fff",
           },
-          disabled && s.padDisabled,
+          (disabled || readOnly) && s.padDisabled,
+          Platform.OS === "web" && interactive
+            ? { touchAction: "none", userSelect: "none" }
+            : null,
         ]}
-        {...(disabled ? {} : panResponder.panHandlers)}
+        {...(interactive ? panResponder.panHandlers : {})}
       >
-        {!hasInk ? (
+        {!hasInk && !compact ? (
           <Text style={[s.hint, { color: C.text3 }]} pointerEvents="none">
             Mit dem Finger unterschreiben
+          </Text>
+        ) : null}
+        {!hasInk && compact ? (
+          <Text style={[s.hintCompact, { color: C.text3 }]} pointerEvents="none">
+            —
           </Text>
         ) : null}
         {lineSegments.map((seg) => (
@@ -137,12 +215,12 @@ export default function SignaturePad({ strokes, onChangeStrokes, C, disabled = f
             key={seg.key}
             from={seg.from}
             to={seg.to}
-            color={C.text}
-            thickness={STROKE_WIDTH}
+            color="#111111"
+            thickness={strokeThickness}
           />
         ))}
       </View>
-      {layout && hasInk && !disabled ? (
+      {layout && hasInk && showClearButton ? (
         <Pressable
           onPress={handleClear}
           accessibilityRole="button"
@@ -168,25 +246,29 @@ function SignatureLine({ from, to, color, thickness }) {
   const dy = to.y - from.y;
   const length = Math.hypot(dx, dy);
   if (length < 0.5) return null;
-  const angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const angleDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const cx = (from.x + to.x) / 2;
+  const cy = (from.y + to.y) / 2;
 
   return (
     <View
       pointerEvents="none"
       style={{
         position: "absolute",
-        left: from.x,
-        top: from.y - thickness / 2,
+        left: cx - length / 2,
+        top: cy - thickness / 2,
         width: length,
         height: thickness,
         backgroundColor: color,
-        transform: [{ rotate: `${angle}deg` }],
+        transform: [{ rotate: `${angleDeg}deg` }],
       }}
     />
   );
 }
 
 const s = StyleSheet.create({
+  wrapLarge: { flex: 1, alignSelf: "stretch" },
+  wrapCompact: { flex: 1, height: "100%" },
   pad: {
     height: 152,
     borderWidth: 1,
@@ -194,6 +276,18 @@ const s = StyleSheet.create({
     overflow: "hidden",
     justifyContent: "center",
     alignItems: "center",
+  },
+  padLarge: {
+    flex: 1,
+    height: undefined,
+    minHeight: 240,
+    borderRadius: 12,
+  },
+  padCompact: {
+    flex: 1,
+    height: undefined,
+    borderWidth: 0,
+    borderRadius: 0,
   },
   padDisabled: { opacity: 0.85 },
   hint: {
@@ -203,6 +297,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 12,
     textAlign: "center",
   },
+  hintCompact: { fontSize: 20, fontWeight: "300" },
   clearBtn: {
     alignSelf: "flex-end",
     marginTop: 8,

@@ -8,7 +8,7 @@ require("dotenv").config({
 });
 
 const apiBaseUrl = String(
-  process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://dev.parkingsoft.de"
+  process.env.EXPO_PUBLIC_API_BASE_URL ?? "https://parkingsoft.de"
 ).replace(/\/$/, "");
 
 module.exports = {
@@ -22,6 +22,15 @@ module.exports = {
         {
           faceIDPermission:
             "Parkingsoft nutzt Face ID, um dich schneller anzumelden.",
+        },
+      ],
+      [
+        "expo-image-picker",
+        {
+          photosPermission:
+            "Parkingsoft benötigt Zugriff auf Ihre Fotos für das Übergabeprotokoll.",
+          cameraPermission:
+            "Parkingsoft benötigt die Kamera für Fotos im Übergabeprotokoll.",
         },
       ],
     ],

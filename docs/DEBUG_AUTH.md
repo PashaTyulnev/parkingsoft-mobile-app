@@ -6,7 +6,7 @@ Die App erreicht die URL unter `EXPO_PUBLIC_API_BASE_URL` nicht (falscher Host, 
 
 ### Standard (dieses Projekt)
 
-- API-Basis: **`https://dev.parkingsoft.de`** ([Parkingsoft Dev](https://dev.parkingsoft.de/)) – erreichbar vom Handy über das Internet (kein LAN nötig).
+- API-Basis: **`https://parkingsoft.de`** ([Parkingsoft](https://parkingsoft.de/)) – erreichbar vom Handy über das Internet (kein LAN nötig).
 - Die URL kommt aus **`app.config.js`** → `expo.extra.apiBaseUrl` (lädt `.env` mit **`override: true`**, damit eine alte **`EXPO_PUBLIC_*` System-Umgebungsvariable** unter Windows nicht dauerhaft `127.0.0.1` erzwingt).
 - Nach Änderung an `.env` oder `app.config.js`: **`npx expo start -c`**
 

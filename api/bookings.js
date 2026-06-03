@@ -195,6 +195,77 @@ function joinGermanDateAndTime(datePart, timePart) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function trimDisplayPart(value) {
+  const s = value != null ? String(value).trim() : "";
+  return s.length > 0 ? s : "—";
+}
+
+/**
+ * Extracts HH:MM from German datetime strings (e.g. "22.03.2026 10:00").
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function extractGermanTimeFromDisplay(value) {
+  const s = value != null ? String(value).trim() : "";
+  if (!s || s === "—") return "—";
+  const times = s.match(/\b\d{1,2}:\d{2}\b/g);
+  if (times && times.length > 0) {
+    return times[times.length - 1];
+  }
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mi}`;
+  }
+  return "—";
+}
+
+/**
+ * @param {unknown} datePart
+ * @param {unknown} timePart
+ * @param {string} combinedFallback
+ * @returns {{ date: string; time: string }}
+ */
+function germanDateTimeParts(datePart, timePart, combinedFallback) {
+  const date = trimDisplayPart(datePart);
+  const timeRaw = timePart != null ? String(timePart).trim() : "";
+  const time =
+    timeRaw.length > 0 ? timeRaw : extractGermanTimeFromDisplay(combinedFallback);
+  return { date, time };
+}
+
+/**
+ * @param {unknown} isoOrString
+ * @returns {{ date: string; time: string; combined: string }}
+ */
+function partsFromIsoDateTime(isoOrString) {
+  if (isoOrString === undefined || isoOrString === null || isoOrString === "") {
+    return { date: "—", time: "—", combined: "—" };
+  }
+  const d = new Date(String(isoOrString));
+  if (Number.isNaN(d.getTime())) {
+    const raw = String(isoOrString).trim();
+    return {
+      date: raw || "—",
+      time: extractGermanTimeFromDisplay(raw),
+      combined: raw || "—",
+    };
+  }
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = String(d.getFullYear());
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  const date = `${dd}.${mm}.${yyyy}`;
+  const time = `${hh}:${mi}`;
+  return { date, time, combined: `${date} ${time}` };
+}
+
+/**
  * @param {number} ms
  */
 function daysFromMs(ms) {
@@ -426,6 +497,61 @@ function buildFlightLabel(r) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string | null} E.164-style dial string for `tel:` links
+ */
+export function normalizeBookingPhone(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw === "—" || raw === "-") return null;
+  const hasPlus = raw.startsWith("+");
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 5) return null;
+  return hasPlus ? `+${digits}` : digits;
+}
+
+/**
+ * @param {Record<string, unknown>} r
+ * @returns {{ dial: string; display: string } | null}
+ */
+export function extractBookingPhoneFromRow(r) {
+  const customer =
+    r.customer && typeof r.customer === "object"
+      ? /** @type {Record<string, unknown>} */ (r.customer)
+      : null;
+  const candidates = [
+    r.phone,
+    r.phoneNumber,
+    r.mobile,
+    r.mobilePhone,
+    r.telephone,
+    r.tel,
+    r.customerPhone,
+    r.contactPhone,
+    customer?.phone,
+    customer?.phoneNumber,
+    customer?.mobile,
+    customer?.mobilePhone,
+    customer?.telephone,
+  ];
+  for (const c of candidates) {
+    const display = String(c ?? "").trim();
+    if (!display) continue;
+    const dial = normalizeBookingPhone(c);
+    if (dial) return { dial, display };
+  }
+  return null;
+}
+
+/**
+ * @param {string | null | undefined} dial
+ * @returns {string | null}
+ */
+export function bookingPhoneTelUri(dial) {
+  if (!dial) return null;
+  return `tel:${dial}`;
+}
+
+/**
  * @param {Record<string, unknown>} r
  */
 function buildGuestName(r) {
@@ -470,13 +596,29 @@ export function normalizeBooking(raw, index, theme) {
     r.arrivalTime != null ||
     r.departureTime != null;
 
-  const arrival = hasParkingsoftDates
-    ? joinGermanDateAndTime(r.arrivalDate, r.arrivalTime)
-    : formatGermanDateTime(r.arrival ?? r.arrivalAt);
+  const arrivalParts = hasParkingsoftDates
+    ? germanDateTimeParts(
+        r.arrivalDate,
+        r.arrivalTime,
+        joinGermanDateAndTime(r.arrivalDate, r.arrivalTime)
+      )
+    : (() => {
+        const p = partsFromIsoDateTime(r.arrival ?? r.arrivalAt);
+        return { date: p.date, time: p.time };
+      })();
+  const departureParts = hasParkingsoftDates
+    ? germanDateTimeParts(
+        r.departureDate,
+        r.departureTime,
+        joinGermanDateAndTime(r.departureDate, r.departureTime)
+      )
+    : (() => {
+        const p = partsFromIsoDateTime(r.departure ?? r.departureAt);
+        return { date: p.date, time: p.time };
+      })();
 
-  const departure = hasParkingsoftDates
-    ? joinGermanDateAndTime(r.departureDate, r.departureTime)
-    : formatGermanDateTime(r.departure ?? r.departureAt);
+  const arrival = joinGermanDateAndTime(arrivalParts.date, arrivalParts.time);
+  const departure = joinGermanDateAndTime(departureParts.date, departureParts.time);
 
   const noticeRaw = r.notice ?? r.remark ?? r.notes ?? r.comment ?? "";
   const remarkInfo = remarkFromNotice(noticeRaw, theme);
@@ -489,6 +631,8 @@ export function normalizeBooking(raw, index, theme) {
     .trim()
     .toUpperCase();
 
+  const phoneInfo = extractBookingPhoneFromRow(r);
+
   return {
     id,
     reference,
@@ -496,9 +640,15 @@ export function normalizeBooking(raw, index, theme) {
     paymentStatus,
     isNative,
     name: buildGuestName(r),
+    phone: phoneInfo?.dial ?? null,
+    phoneDisplay: phoneInfo?.display ?? null,
     pax: Number(r.passengers ?? r.pax ?? r.persons ?? 1) || 1,
     arrival,
     departure,
+    arrivalDate: arrivalParts.date,
+    arrivalTime: arrivalParts.time,
+    departureDate: departureParts.date,
+    departureTime: departureParts.time,
     days: computeDays(r),
     flight: buildFlightLabel(r),
     plate: String(

@@ -24,6 +24,10 @@ import {
   BOOKING_PRODUCT_SHUTTLE,
   BOOKING_FILTER_LABEL_EXPECTED,
   numericBookingIdFromListItem,
+  normalizeBookingPhone,
+  extractBookingPhoneFromRow,
+  bookingPhoneTelUri,
+  extractGermanTimeFromDisplay,
 } from "../bookings";
 
 jest.mock("../config", () => ({
@@ -308,6 +312,45 @@ describe("bookingPaymentStatusDisplayMeta", () => {
   });
 });
 
+describe("normalizeBookingPhone", () => {
+  it("strips formatting and keeps country code", () => {
+    expect(normalizeBookingPhone("+49 170 1234567")).toBe("+491701234567");
+    expect(normalizeBookingPhone("0170 1234567")).toBe("01701234567");
+  });
+
+  it("returns null for too short or empty", () => {
+    expect(normalizeBookingPhone("")).toBeNull();
+    expect(normalizeBookingPhone("1234")).toBeNull();
+  });
+});
+
+describe("extractBookingPhoneFromRow", () => {
+  it("reads phone from row and nested customer", () => {
+    expect(extractBookingPhoneFromRow({ phone: "+49 30 12345" })?.dial).toBe("+493012345");
+    expect(
+      extractBookingPhoneFromRow({ customer: { mobile: "0151 99887766" } })?.display
+    ).toBe("0151 99887766");
+  });
+});
+
+describe("bookingPhoneTelUri", () => {
+  it("builds tel link", () => {
+    expect(bookingPhoneTelUri("+491701234567")).toBe("tel:+491701234567");
+  });
+});
+
+describe("extractGermanTimeFromDisplay", () => {
+  it("reads time from German datetime", () => {
+    expect(extractGermanTimeFromDisplay("22.03.2026 10:00")).toBe("10:00");
+    expect(extractGermanTimeFromDisplay("16.04.2026 23:00")).toBe("23:00");
+  });
+
+  it("returns em dash when missing", () => {
+    expect(extractGermanTimeFromDisplay("")).toBe("—");
+    expect(extractGermanTimeFromDisplay("—")).toBe("—");
+  });
+});
+
 describe("normalizeBooking (Parkingsoft shape)", () => {
   const row = {
     id: 36599,
@@ -347,6 +390,17 @@ describe("normalizeBooking (Parkingsoft shape)", () => {
     },
   };
 
+  it("maps phone when present", () => {
+    const withPhone = normalizeBooking(
+      { ...row, phone: "+49 170 5551234" },
+      0,
+      THEME
+    );
+    expect(withPhone.phone).toBe("+491705551234");
+    expect(withPhone.phoneDisplay).toBe("+49 170 5551234");
+    expect(bookingPhoneTelUri(withPhone.phone)).toBe("tel:+491705551234");
+  });
+
   it("maps names, dates, flight, price, badge, detailStatus", () => {
     const b = normalizeBooking(row, 0, THEME);
     expect(b.id).toBe("36599");
@@ -354,6 +408,10 @@ describe("normalizeBooking (Parkingsoft shape)", () => {
     expect(b.name).toBe("Berit Hartmann");
     expect(b.arrival).toBe("22.03.2026 10:00");
     expect(b.departure).toBe("16.04.2026 23:00");
+    expect(b.arrivalDate).toBe("22.03.2026");
+    expect(b.arrivalTime).toBe("10:00");
+    expect(b.departureDate).toBe("16.04.2026");
+    expect(b.departureTime).toBe("23:00");
     expect(b.days).toBe(26);
     expect(b.pax).toBe(2);
     expect(b.flight).toBe("IB0765");
@@ -362,6 +420,7 @@ describe("normalizeBooking (Parkingsoft shape)", () => {
     expect(b.product).toBe("S");
     expect(b.paymentStatus).toBe("FB");
     expect(b.isNative).toBe(false);
+    expect(b.phone).toBeNull();
     expect(b.price).toBe("153,00 €");
     expect(b.badge).toBe("Reingefahren");
     expect(b.remark).toBe("Landung um");

@@ -1,6 +1,6 @@
 import Constants from "expo-constants";
 
-const DEFAULT_API_BASE = "https://dev.parkingsoft.de";
+const DEFAULT_API_BASE = "https://parkingsoft.de";
 
 /**
  * @returns {string | null}
@@ -75,6 +75,9 @@ export const API_DEPOSIT_REGISTER_ADD_PATH =
 /** Delete deposit line (GET ?depositId=, Bearer). May respond with redirect. */
 export const API_DEPOSIT_REGISTER_DELETE_PATH =
   "/api/external/deposit-register/deleteDeposit";
+
+/** Booking handover / return protocol (GET/POST multipart). */
+export const API_BOOKINGS_PROTOCOL_PATH_PREFIX = "/api/external/bookings";
 
 /** Time tracker (GET, Bearer). */
 export const API_TIMETRACKER_CHECKIN_PATH = "/api/external/timetracker/checkin";
